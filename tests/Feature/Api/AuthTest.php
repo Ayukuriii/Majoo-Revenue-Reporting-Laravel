@@ -3,7 +3,6 @@
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Symfony\Component\HttpFoundation\Response;
-use Tests\TestCase;
 
 uses(RefreshDatabase::class);
 
@@ -28,7 +27,7 @@ describe('Authentication', function () {
     });
 
     test('login returns 401 for a wrong password', function () {
-        $user = User::factory()->create();
+        $user = createMerchantUser();
 
         $response = $this->postJson('/api/auth/login', [
             'email' => $user->email,
@@ -41,8 +40,22 @@ describe('Authentication', function () {
         ]);
     });
 
-    test('login returns a bearer token', function () {
+    test('login returns 403 when the account has no merchant', function () {
         $user = User::factory()->create();
+
+        $response = $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'password',
+        ]);
+
+        $response->assertStatus(Response::HTTP_FORBIDDEN);
+        $response->assertJson([
+            'message' => 'Account has no merchant',
+        ]);
+    });
+
+    test('login returns a bearer token', function () {
+        $user = createMerchantUser();
 
         $response = $this->postJson('/api/auth/login', [
             'email' => $user->email,
@@ -68,9 +81,11 @@ describe('Authentication', function () {
     });
 
     test('me returns the authenticated user without a password', function () {
-        $user = User::factory()->create([
+        $user = createMerchantUser([
             'name' => 'Merchant One',
             'email' => 'merchant1@example.com',
+        ], [
+            'merchant_name' => 'merchant 1',
         ]);
 
         $token = loginToken($this, $user);
@@ -80,11 +95,13 @@ describe('Authentication', function () {
         $response->assertOk();
         $response->assertJsonPath('data.email', 'merchant1@example.com');
         $response->assertJsonPath('data.name', 'Merchant One');
+        $response->assertJsonPath('data.merchant_id', $user->merchant->id);
+        $response->assertJsonPath('data.merchant_name', 'merchant 1');
         $response->assertJsonMissingPath('data.password');
     });
 
     test('logout invalidates the token', function () {
-        $user = User::factory()->create();
+        $user = createMerchantUser();
         $token = loginToken($this, $user);
 
         $logout = $this->withToken($token)->postJson('/api/auth/logout');
@@ -96,7 +113,7 @@ describe('Authentication', function () {
     });
 
     test('refresh returns a new bearer token', function () {
-        $user = User::factory()->create();
+        $user = createMerchantUser();
         $token = loginToken($this, $user);
 
         $response = $this->withToken($token)->postJson('/api/auth/refresh');
@@ -110,18 +127,3 @@ describe('Authentication', function () {
         expect($response->json('data.token'))->toBeString()->not->toBeEmpty();
     });
 });
-
-/**
- * @param  TestCase  $test
- */
-function loginToken(object $test, User $user): string
-{
-    $response = $test->postJson('/api/auth/login', [
-        'email' => $user->email,
-        'password' => 'password',
-    ]);
-
-    $response->assertOk();
-
-    return $response->json('data.token');
-}

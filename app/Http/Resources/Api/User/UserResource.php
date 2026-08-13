@@ -25,6 +25,8 @@ class UserResource extends JsonResource
         return [
             'email' => $user->email,
             'name' => $user->name,
+            'merchant_id' => $user->merchant?->id,
+            'merchant_name' => $user->merchant?->merchant_name,
         ];
     }
 }

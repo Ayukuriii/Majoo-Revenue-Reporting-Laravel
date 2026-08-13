@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Exceptions\AccountHasNoMerchantException;
 use App\Models\User;
+use App\Support\Tenant;
 use PHPOpenSourceSaver\JWTAuth\JWTGuard;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -15,6 +17,7 @@ class AuthService
      * @return array{token: string, token_type: string, expires_in: int}
      *
      * @throws \Exception
+     * @throws AccountHasNoMerchantException
      */
     public function login(array $data): array
     {
@@ -25,6 +28,14 @@ class AuthService
 
         if (! is_string($token) || $token === '') {
             throw new \Exception('Invalid credentials', Response::HTTP_UNAUTHORIZED);
+        }
+
+        $user = $this->guard()->user();
+
+        if (! $user instanceof User || $user->merchant === null) {
+            $this->guard()->logout();
+
+            throw new AccountHasNoMerchantException;
         }
 
         return $this->tokenPayload($token);
@@ -61,7 +72,19 @@ class AuthService
             throw new \Exception('User not found', Response::HTTP_NOT_FOUND);
         }
 
+        $user->loadMissing('merchant');
+
         return $user;
+    }
+
+    /**
+     * Merchant id for the authenticated user (never from the request).
+     *
+     * @throws AccountHasNoMerchantException
+     */
+    public function currentMerchantId(): int
+    {
+        return Tenant::currentMerchantId();
     }
 
     /**

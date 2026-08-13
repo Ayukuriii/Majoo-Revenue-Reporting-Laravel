@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Database\Factories\TransactionFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -47,5 +48,23 @@ class Transaction extends Model
     public function outlet(): BelongsTo
     {
         return $this->belongsTo(Outlet::class);
+    }
+
+    /**
+     * @param  Builder<Transaction>  $query
+     * @return Builder<Transaction>
+     */
+    public function scopeForMerchant(Builder $query, int $merchantId): Builder
+    {
+        return $query->where('merchant_id', $merchantId);
+    }
+
+    /**
+     * @param  Builder<Transaction>  $query
+     * @return Builder<Transaction>
+     */
+    public function scopeForOutlet(Builder $query, int $outletId): Builder
+    {
+        return $query->where('outlet_id', $outletId);
     }
 }

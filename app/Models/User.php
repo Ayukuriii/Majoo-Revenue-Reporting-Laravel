@@ -64,7 +64,12 @@ class User extends Authenticatable implements JWTSubject
      */
     public function getJWTCustomClaims(): array
     {
-        return [];
+        $merchant = $this->merchant;
+
+        return [
+            'merchant_id' => $merchant?->id,
+            'merchant_name' => $merchant?->merchant_name,
+        ];
     }
 
     /**
