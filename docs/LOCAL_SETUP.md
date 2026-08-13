@@ -44,7 +44,16 @@ php artisan migrate --seed
 npm install
 ```
 
-Seed users: `merchant1@example.com` / `password` and `merchant2@example.com` / `password`.
+### Seed logins
+
+After `php artisan migrate --seed`:
+
+| Email                   | Password   | Merchant   | Outlets     |
+| ----------------------- | ---------- | ---------- | ----------- |
+| `merchant1@example.com` | `password` | Merchant 1 | ids 1 and 3 |
+| `merchant2@example.com` | `password` | Merchant 2 | id 2        |
+
+Use these on [http://majoo-revenue-reporting.test/login](http://majoo-revenue-reporting.test/login). Tenancy is JWT user → `merchants.user_id`.
 
 ## nginx + PHP-FPM
 
@@ -81,7 +90,7 @@ Production-like SPA on the same machine: `npm run build` writes `public/spa`. Th
 | Check | Expected |
 | --- | --- |
 | `GET http://majoo-revenue-reporting.test/api/health` | JSON with `data.status` = `ok` |
-| Login as merchant 1 | Dashboard shows Merchant 1 |
+| Login as `merchant1@example.com` / `password` | Dashboard shows Merchant 1 |
 | Merchant report year=2026 month=11 | 30 days, omzet `0` on every day |
 | Outlet report outlet 1, August 2026 | Seeded omzet; **2026-08-03** is `0` |
 | Outlet picker (merchant 1) | Outlet 1 and Outlet 2 (ids 1 and 3), not merchant 2’s outlet |

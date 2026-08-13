@@ -98,7 +98,14 @@ Demo seed (assignment reviewers / staging only; skip on a clean production datab
 php artisan db:seed --force
 ```
 
-That creates `merchant1@example.com` / `password` and `merchant2@example.com` / `password`.
+That creates:
+
+| Email                   | Password   | Merchant   | Outlets     |
+| ----------------------- | ---------- | ---------- | ----------- |
+| `merchant1@example.com` | `password` | Merchant 1 | ids 1 and 3 |
+| `merchant2@example.com` | `password` | Merchant 2 | id 2        |
+
+Use these on `https://APP_DOMAIN/login`. Do not keep this seed on a real production database.
 
 ## 6. SPA build
 
@@ -177,7 +184,7 @@ Ports **22**, **80**, and **443** must be open.
 | --- | --- |
 | `https://APP_DOMAIN/api/health` | `{ "data": { "status": "ok" }, ... }` |
 | `https://APP_DOMAIN/login` | SPA login (not a Laravel Blade page) |
-| Login with a seeded merchant | Dashboard + reports |
+| Login (`merchant1@example.com` / `password`) | Dashboard + Merchant 1 reports |
 | `https://APP_DOMAIN/api/documentation` | Swagger if you keep L5-Swagger in production |
 
 SPA calls **relative** `/api/...` on this origin. Do not set `VITE_API_BASE_URL` to a different host.

@@ -24,7 +24,14 @@ Local: `http://majoo-revenue-reporting.test`. Production: `https://APP_DOMAIN`.
 
 ## Authorize with JWT
 
-1. `POST /api/auth/login` with `{ "email": "merchant1@example.com", "password": "password" }`.
+1. `POST /api/auth/login` with a seed user:
+
+   | Email                   | Password   |
+   | ----------------------- | ---------- |
+   | `merchant1@example.com` | `password` |
+   | `merchant2@example.com` | `password` |
+
+   Example body: `{ "email": "merchant1@example.com", "password": "password" }`.
 2. Copy `data.token` from the JSON body.
 3. In Swagger UI click **Authorize**, scheme **bearerAuth**, paste the token only (no `Bearer ` prefix; the UI adds it).
 4. Call protected paths (`/api/auth/me`, `/api/outlets`, reports). Logout or a missing token returns **401**.
