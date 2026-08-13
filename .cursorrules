@@ -13,6 +13,7 @@ These rules define the canonical architecture, code patterns, project structure,
 - **Formatting**: Laravel Pint (PSR-12)
 - **Static analysis**: Larastan (PHPStan)
 - **Queue**: Redis/database queue for async work
+- **OpenAPI**: darkaonline/l5-swagger (Swagger UI + generated JSON/YAML contract)
 - **Optional**: Telescope (dev), Reverb (broadcasting), Maatwebsite Excel, DomPDF
 
 ---
@@ -37,6 +38,7 @@ app/
 │   └── Resources/Api/   # API Resources grouped by domain
 ├── Jobs/                   # Queue jobs (SendEmailJob, ProcessNotificationJob, etc.)
 ├── Mail/                   # Mailable classes
+├── OpenApi/                # OpenAPI 3 attributes (Info, schemas, path contracts)
 ├── Models/                 # Eloquent models
 ├── Notifications/          # Notification classes (must implement ShouldQueue)
 ├── Providers/              # Service provider bindings (Contracts → implementations)
@@ -356,6 +358,19 @@ protected static function bootHasPublicId(): void
     });
 }
 ```
+
+---
+
+## OpenAPI / Swagger
+
+Contract lives in `app/OpenApi/` (PHP 8 attributes), not in controllers. Controllers stay thin.
+
+- Generate: `php artisan l5-swagger:generate`
+- UI: `/api/documentation`
+- JSON: `/docs` (`storage/api-docs/api-docs.json`)
+- YAML: `storage/api-docs/api-docs.yaml`
+
+When adding an endpoint, add matching `OA\Get`/`OA\Post` (and schemas) under `app/OpenApi/`, then regenerate. Use `respond_*` JSON shapes in schemas. Protected routes use `security: [['bearerAuth' => []]]`.
 
 ---
 
