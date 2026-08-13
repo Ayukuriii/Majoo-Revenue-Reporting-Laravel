@@ -12,7 +12,7 @@
 # (e.g. unix:/run/php/php8.3-fpm.sock).
 
 server {
-    listen 80;
+    listen 80
     listen [::]:80;
     # listen 443 ssl;
     # listen [::]:443 ssl;
@@ -47,7 +47,7 @@ server {
         try_files $uri /index.html;
     }
 
-    location ~ /\.(?!well-known).* {
+    location ~ ^/\.(?!well-known) {
         deny all;
     }
 }

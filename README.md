@@ -27,11 +27,11 @@ sudo nginx -t && sudo systemctl reload nginx
 ```
 
 3. Ensure PHP-FPM is running. The vhost uses `unix:/run/php/php8.2-fpm.sock`; change the socket in the conf if this machine uses another PHP version.
-4. After Step 9 (React + Vite), run `npm run dev` (Vite on `127.0.0.1:5173`), then open [http://localhost:8080/](http://localhost:8080/). Until then, `/` proxies to Vite (nothing listening yet); `/api` already hits Laravel (`/api/health`, `/api/documentation`).
+4. `npm install` then `npm run dev` (Vite on `127.0.0.1:5173`). Open [http://localhost:8080/login](http://localhost:8080/login). nginx proxies `/` to Vite and `/api` to Laravel (`/api/health`, `/api/documentation`).
 
-Frontend always uses `VITE_API_BASE_URL=/api` (relative, same origin). That env var is added in Step 9. Do not add CORS middleware for the SPA.
+Frontend always uses `VITE_API_BASE_URL=/api` (relative, same origin). Do not add CORS middleware for the SPA.
 
-`public/spa` is created in Step 9 (`npm run build`). Do not overwrite `public/index.php` with the SPA.
+Production SPA files: `npm run build` writes to `public/spa` (`public/spa/index.html`). Do not overwrite `public/index.php` with the SPA. Seed login: `merchant1@example.com` / `password`.
 
 ### Production (Ubuntu VPS)
 
