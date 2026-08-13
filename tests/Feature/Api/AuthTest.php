@@ -45,7 +45,7 @@ describe('Authentication', function () {
 
         $response = $this->postJson('/api/auth/login', [
             'email' => $user->email,
-            'password' => 'password',
+            'password' => generatePassword(),
         ]);
 
         $response->assertStatus(Response::HTTP_FORBIDDEN);
@@ -59,7 +59,7 @@ describe('Authentication', function () {
 
         $response = $this->postJson('/api/auth/login', [
             'email' => $user->email,
-            'password' => 'password',
+            'password' => generatePassword(),
         ]);
 
         $response->assertOk();
@@ -98,6 +98,15 @@ describe('Authentication', function () {
         $response->assertJsonPath('data.merchant_id', $user->merchant->id);
         $response->assertJsonPath('data.merchant_name', 'merchant 1');
         $response->assertJsonMissingPath('data.password');
+    });
+
+    test('logout without a token returns 401', function () {
+        $response = $this->postJson('/api/auth/logout');
+
+        $response->assertStatus(Response::HTTP_UNAUTHORIZED);
+        $response->assertJson([
+            'message' => 'Unauthenticated.',
+        ]);
     });
 
     test('logout invalidates the token', function () {

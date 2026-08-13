@@ -23,6 +23,23 @@ function createMerchantUser(array $userAttributes = [], array $merchantAttribute
     return $user->fresh(['merchant']);
 }
 
+function generatePassword(): string
+{
+    return 'password';
+}
+
+/**
+ * @param  TestCase  $test
+ */
+function actingAsMerchant(object $test, ?User $user = null): User
+{
+    $user ??= createMerchantUser();
+
+    $test->actingAs($user, 'api');
+
+    return $user;
+}
+
 /**
  * @param  TestCase  $test
  */
@@ -30,7 +47,7 @@ function loginToken(object $test, User $user): string
 {
     $response = $test->postJson('/api/auth/login', [
         'email' => $user->email,
-        'password' => 'password',
+        'password' => generatePassword(),
     ]);
 
     $response->assertOk();

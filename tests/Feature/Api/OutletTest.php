@@ -20,9 +20,9 @@ describe('Outlets', function () {
     test('merchant one only receives outlets 1 and 3', function () {
         $this->seed(DatabaseSeeder::class);
 
-        $token = loginToken($this, User::query()->findOrFail(1));
+        actingAsMerchant($this, User::query()->findOrFail(1));
 
-        $response = $this->withToken($token)->getJson('/api/outlets?merchant_id=2');
+        $response = $this->getJson('/api/outlets?merchant_id=2');
 
         $response->assertOk();
         $ids = collect($response->json('data'))->pluck('id')->all();
@@ -34,9 +34,9 @@ describe('Outlets', function () {
     test('merchant two never sees merchant one outlets', function () {
         $this->seed(DatabaseSeeder::class);
 
-        $token = loginToken($this, User::query()->findOrFail(2));
+        actingAsMerchant($this, User::query()->findOrFail(2));
 
-        $response = $this->withToken($token)->getJson('/api/outlets');
+        $response = $this->getJson('/api/outlets');
 
         $response->assertOk();
         $ids = collect($response->json('data'))->pluck('id')->all();
