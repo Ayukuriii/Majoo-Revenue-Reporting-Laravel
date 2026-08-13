@@ -1,0 +1,826 @@
+# Laravel API Backoffice — Project Rules
+
+These rules define the canonical architecture, code patterns, project structure, and data flow for Laravel API projects following this template. Apply them consistently when scaffolding new features or starting greenfield projects from this blueprint.
+
+---
+
+## Tech Stack
+
+- **PHP** ^8.2, **Laravel** ^12
+- **Auth**: php-open-source-saver/jwt-auth (JWT Bearer tokens, `auth:api` guard)
+- **RBAC**: spatie/laravel-permission (roles + permissions)
+- **Testing**: Pest PHP (Feature + Unit)
+- **Formatting**: Laravel Pint (PSR-12)
+- **Static analysis**: Larastan (PHPStan)
+- **Queue**: Redis/database queue for async work
+- **Optional**: Telescope (dev), Reverb (broadcasting), Maatwebsite Excel, DomPDF
+
+---
+
+## Project Structure
+
+```
+app/
+├── Constants/              # Centralized status/enum constants (Status, PaymentMethod, etc.)
+├── Contracts/              # Interfaces for swappable implementations (e.g. PaymentGatewayInterface)
+├── Exceptions/             # Domain-specific exceptions (OrderNotFoundException, etc.)
+├── Helpers/
+│   ├── helpers.php         # General helpers (storageAsset, carbonParse, etc.)
+│   └── respond_helpers.php # API response helpers (respondWithData, respondError, etc.)
+├── Http/
+│   ├── Controllers/
+│   │   └── Api/
+│   │       ├── Admin/      # Backoffice endpoints (role + permission guarded)
+│   │       ├── User/       # Authenticated customer/user endpoints
+│   │       └── Public/     # Unauthenticated endpoints
+│   ├── Requests/Api/    # Form Requests grouped by domain (Customer/, Booking/, DataTables/)
+│   └── Resources/Api/   # API Resources grouped by domain
+├── Jobs/                   # Queue jobs (SendEmailJob, ProcessNotificationJob, etc.)
+├── Mail/                   # Mailable classes
+├── Models/                 # Eloquent models
+├── Notifications/          # Notification classes (must implement ShouldQueue)
+├── Providers/              # Service provider bindings (Contracts → implementations)
+├── Services/               # Business logic layer (one service per domain)
+├── Support/                # Pure/static domain helpers (BookingSubtotal, OrderDiscount)
+└── Traits/
+    ├── HasPublicId.php     # Auto-generate UUID public_id on create
+    └── HandlesDataTablesRequest.php  # Shared DataTables logic
+
+bootstrap/app.php           # Middleware aliases, exception rendering
+routes/
+├── api.php                 # Entry: Broadcast auth + require/api.php
+└── api/
+    ├── api.php             # Route groups: admin, user, public, auth, midtrans, select
+    ├── auth.php
+    ├── admin/              # One file per domain (customer.php, booking.php, etc.)
+    ├── user/
+    └── public/
+
+database/
+├── factories/
+├── migrations/             # YYYY_MM_DD_HHMMSS_description.php
+└── seeders/
+
+tests/
+├── Pest.php                # Global test helpers (createCustomer, actingAsAdmin, etc.)
+├── Feature/Api/            # Integration/API flow tests
+└── Unit/                   # Isolated logic tests (Service/, Jobs/, etc.)
+
+docs/                       # Architecture, security, API specs, testing guides
+```
+
+### Composer Autoload (helpers)
+
+Register global helpers in `composer.json`:
+
+```json
+"autoload": {
+    "files": [
+        "app/Helpers/helpers.php",
+        "app/Helpers/respond_helpers.php"
+    ],
+    "psr-4": {
+        "App\\": "app/"
+    }
+}
+```
+
+Run `composer dump-autoload` after adding new helper files.
+
+---
+
+## Data Flow: Request → Database → Response
+
+Every API feature follows this pipeline. **Never skip layers.**
+
+```
+HTTP Request
+    ↓
+Route (middleware: auth:api, role, permission, throttle)
+    ↓
+Form Request (validation + authorization + prepareForValidation)
+    ↓
+Controller (thin: inject Service, call method, return helper response)
+    ↓
+Service (business logic, DB::transaction, Eloquent queries, throw exceptions)
+    ↓
+Model / Eloquent (relationships, scopes, casts, HasPublicId)
+    ↓
+Database
+    ↓
+Service returns Model|array|void
+    ↓
+Controller wraps result in API Resource (if returning data)
+    ↓
+respondWithData | respondWithMessage | respondWithPaginatedData | respondError
+    ↓
+JSON Response
+```
+
+### Async side effects (email, notifications, webhooks)
+
+```
+Service
+    ↓
+Job::dispatch(...) or Notification (ShouldQueue)
+    ↓
+Queue worker
+    ↓
+External service (Mail, WhatsApp, Payment gateway callback handler)
+```
+
+**Rules:**
+- Controllers MUST NOT contain business logic or direct Eloquent queries.
+- Services MUST NOT return HTTP responses; they return data or throw exceptions.
+- Validation MUST live in Form Requests, never inline in controllers.
+- All API JSON responses MUST use `respond_*` helpers for consistent shape.
+
+---
+
+## Architecture & Patterns
+
+### DO use
+| Pattern | Purpose |
+|---------|---------|
+| **Service Layer** | All business logic |
+| **Form Request** | Validation per action |
+| **API Resource** | Response transformation |
+| **Custom Exception** | Domain errors |
+| **Constants class** | Status values, enums |
+| **Contract + binding** | Swappable integrations |
+| **Support class** | Pure calculation/helper logic |
+| **Trait** | Reusable controller/model behavior |
+
+### DO NOT use
+| Anti-pattern | Use instead |
+|--------------|-------------|
+| Repository Pattern | Eloquent directly in Service |
+| DTO classes | `array` from `$request->validated()` or Model |
+| Action classes | Service methods (unless extremely complex) |
+| Fat controllers | Thin controller + Service |
+| `Mail::to()->send()` in Service | `SendEmailJob::dispatch()` |
+| Sync Notification | `implements ShouldQueue` |
+| Yajra `DataTables::of()` | Manual DataTables with `HandlesDataTablesRequest` trait |
+| Exposing internal `id` in API | Expose `public_id` (UUID) only |
+
+---
+
+## Controllers
+
+### Structure
+- Namespace: `App\Http\Controllers\Api\{Admin|User|Public}\{Domain}`
+- Constructor injection for Service(s)
+- RESTful methods: `index`, `store`, `show`, `update`, `destroy` (+ custom when needed)
+- Return type: `JsonResponse` on all API methods
+- PHPDoc on every public method
+
+### Standard CRUD pattern
+
+```php
+public function store(StoreUserRequest $request): JsonResponse
+{
+    try {
+        $this->userService->createUser($request->validated());
+
+        return respondWithMessage(message: 'User data has been created');
+    } catch (\Exception $e) {
+        $statusCode = str_contains($e->getMessage(), 'already')
+            ? Response::HTTP_CONFLICT
+            : Response::HTTP_INTERNAL_SERVER_ERROR;
+
+        return respondError(error: $e->getMessage(), statusCode: $statusCode);
+    }
+}
+
+public function show(string $id): JsonResponse
+{
+    try {
+        $user = $this->userService->getUser($id);
+
+        return respondWithData(
+            data: new UserResource($user),
+            message: 'User data retrieved successfully'
+        );
+    } catch (\Exception $e) {
+        $statusCode = str_contains($e->getMessage(), 'not found')
+            ? Response::HTTP_NOT_FOUND
+            : Response::HTTP_INTERNAL_SERVER_ERROR;
+
+        return respondError(error: $e->getMessage(), statusCode: $statusCode);
+    }
+}
+```
+
+### HTTP status mapping (controller layer)
+- `not found` in message → 404
+- `already` in message → 409
+- Other exceptions → 500 (or map custom exceptions by `$e->getCode()` when 4xx/5xx)
+
+### Separate controllers for different concerns
+- `{Domain}Controller` — CRUD
+- `{Domain}DatatablesController` — server-side DataTables lists
+- `{Domain}HistoryController` — nested read-only sub-resources
+
+---
+
+## Form Requests
+
+- One class per action: `StoreUserRequest`, `UpdateUserRequest`, `UpdateUserStatusRequest`
+- Location: `app/Http/Requests/Api/{Domain}/`
+- `authorize(): bool` — return `true` unless specific auth logic needed
+- Use `prepareForValidation()` to normalize defaults (e.g. `country_code => '+62'`, nullable fields)
+- Custom `messages()` for user-facing validation text
+- Reusable base: `DataTablesListRequest` for list endpoints
+- Sort/filter params MUST be validated here; column names validated via allowlist in controller/trait
+
+```php
+public function rules(): array
+{
+    return [
+        'name' => ['required', 'string', 'max:255'],
+        'email' => ['nullable', 'email', 'max:255', Rule::unique('users', 'email')],
+        'status' => ['sometimes', 'string', Rule::in(Status::getGeneralStatuses())],
+    ];
+}
+```
+
+---
+
+## Services
+
+- Location: `app/Services/{Domain}Service.php`
+- Inject dependencies via constructor (other services, not repositories)
+- Methods accept `array $data` from validated request or typed primitives
+- Use `DB::transaction()` for multi-table writes
+- Use `lockForUpdate()` for race-condition-sensitive reads
+- Throw `\Exception` or custom domain exceptions with descriptive messages
+- Return Models (with `->fresh(['relations'])`) or void
+- PHPDoc with `@param`, `@return`, `@throws`
+
+```php
+public function createCustomer(array $data): User
+{
+    return DB::transaction(function () use ($data) {
+        // validate uniqueness, hash password, create records
+        $customer = User::create($data);
+        $customer->assignRole(Role::ROLE_CUSTOMER);
+
+        return $customer->fresh(['profile']);
+    });
+}
+
+public function getCustomer(string $publicId): User
+{
+    $customer = User::where('public_id', $publicId)
+        ->role('customer')
+        ->with('profile')
+        ->first();
+
+    if (! $customer) {
+        throw new \Exception('Customer not found');
+    }
+
+    return $customer;
+}
+```
+
+### Service decomposition
+- `{Domain}Service` — CRUD and orchestration
+- `{Domain}Validator` — complex validation rules (e.g. booking availability)
+- `{Domain}NotificationService` — notification dispatch logic
+- Resolver/helper services for cross-cutting calculations
+
+---
+
+## Models
+
+```php
+class User extends Authenticatable implements JWTSubject
+{
+    use HasFactory, HasPublicId, HasRoles, Notifiable, SoftDeletes;
+
+    protected $fillable = [/* explicit list */];
+
+    protected $hidden = ['password', 'remember_token'];
+
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'password' => 'hashed',
+        ];
+    }
+
+    public function getJWTIdentifier(): mixed
+    {
+        return $this->getKey();
+    }
+
+    public function getJWTCustomClaims(): array
+    {
+        return [];
+    }
+
+    public function profile(): HasOne
+    {
+        return $this->hasOne(UserProfile::class);
+    }
+
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('status', Status::GENERAL_STATUS_ACTIVE);
+    }
+}
+```
+
+### Rules
+- `$fillable` always explicit (never `$guarded = []`)
+- `SoftDeletes` when data must be recoverable
+- Authenticatable `User` MUST implement `PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject` (`getJWTIdentifier`, `getJWTCustomClaims`)
+- Do **not** use Laravel Sanctum (`HasApiTokens`, `auth:sanctum`, personal access tokens) for API auth
+- `HasPublicId` trait on all externally referenced models
+- Query scopes for repeated filters (`scopeActive`, `scopeSearch`)
+- Accessors for computed/formatted attributes; `casts` for type conversion
+- Relationships typed with return types (`HasOne`, `HasMany`, `BelongsTo`, `MorphMany`)
+- Never expose internal `id` in API Resources — use `public_id`
+
+### HasPublicId trait
+
+```php
+protected static function bootHasPublicId(): void
+{
+    static::creating(function ($model) {
+        if (empty($model->public_id)) {
+            $model->public_id = (string) Str::uuid();
+        }
+    });
+}
+```
+
+---
+
+## API Resources
+
+- Location: `app/Http/Resources/Api/{Domain}/{Model}Resource.php`
+- Transform Model → array; never expose sensitive fields
+- ISO 8601 dates: `$this->created_at?->toISOString()`
+- Money: `number_format((float) $value, 2, '.', '')`
+- Nullable relations: `$this->profile?->point ?? 0`
+
+```php
+public function toArray(Request $request): array
+{
+    return [
+        'public_id' => $this->public_id,
+        'name' => $this->name,
+        'created_at' => $this->created_at?->toISOString(),
+    ];
+}
+```
+
+---
+
+## Response Helpers
+
+All helpers live in `app/Helpers/respond_helpers.php`.
+
+| Helper | Use case | Shape |
+|--------|----------|-------|
+| `respondWithData($data, $message?)` | Single resource or collection | `{ message?, data }` |
+| `respondWithPaginatedData(ResourceCollection, $message?)` | Paginated lists | `{ message?, data, meta, links }` |
+| `respondWithMessage($message, $statusCode?)` | Success with no body | `{ message }` |
+| `respondError($error, $statusCode?)` | Errors | `{ message }` |
+
+All responses use: `JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION`
+
+### General helpers (`app/Helpers/helpers.php`)
+
+| Helper | Purpose |
+|--------|---------|
+| `storageAsset($path)` | Public disk asset URL |
+| `adminMediaUrl(?string $path)` | Admin upload URL (config-driven disk) |
+| `carbonParse($date)` | Carbon parse shorthand |
+| `parseToTimezone($date, $tz?)` | Timezone conversion (default Asia/Jakarta) |
+| `getUserIdByPublicId(?string $publicId)` | Resolve UUID → internal id for validation |
+| `getWeeklyDateRange($date?)` | Monday–Sunday range |
+| `parseMonthYearSearch(string $search)` | Month/year filter parsing |
+| `whatsappBot($payload, $endpoint)` | WhatsApp HTTP integration |
+| `whatsappSendFile($phone, $filePath, $caption?)` | WhatsApp file send |
+
+Add new global helpers here with `if (! function_exists('name'))` guard.
+
+---
+
+## Auth (JWT)
+
+Package: `php-open-source-saver/jwt-auth`. Default guard is `api` with driver `jwt` (`config/auth.php`). Clients send `Authorization: Bearer {token}`.
+
+```php
+'defaults' => [
+    'guard' => env('AUTH_GUARD', 'api'),
+],
+
+'guards' => [
+    'web' => ['driver' => 'session', 'provider' => 'users'],
+    'api' => ['driver' => 'jwt', 'provider' => 'users'],
+],
+```
+
+### Rules
+- Protect API routes with `auth:api` (never `auth:sanctum`)
+- Issue tokens via `auth('api')->attempt($credentials)` / `auth('api')->login($user)`
+- Refresh with `auth('api')->refresh()`; logout with `auth('api')->logout()` (blacklist)
+- TTL / refresh TTL live in `config/jwt.php` (`JWT_TTL`, `JWT_REFRESH_TTL`); secret via `php artisan jwt:secret`
+- Auth business logic belongs in an Auth/User Service, not the controller
+
+### Login response shape
+
+```json
+{
+  "message": "...",
+  "data": {
+    "token": "<jwt>",
+    "token_type": "bearer",
+    "expires_in": 3600
+  }
+}
+```
+
+---
+
+## Routes
+
+### Organization
+- Entry: `routes/api.php` → `routes/api/v1/api.php`
+- Split by domain into separate files under `routes/api/v1/admin/`, `user/`, `public/`
+- Use `require __DIR__ . '/admin/customer.php'` pattern
+
+### Middleware stacking
+
+```php
+// Admin group
+Route::prefix('admin')
+    ->middleware(['auth:api', 'role:admin|cashier|supervisor|finance'])
+    ->group(function () {
+        require __DIR__ . '/admin/customer.php';
+    });
+
+// Per-route permissions
+Route::post('/', [CustomerController::class, 'store'])
+    ->middleware('permission:customer.create');
+
+// User group
+Route::prefix('user')->middleware(['auth:api'])->group(...);
+
+// Public (no auth)
+Route::prefix('public')->group(...);
+```
+
+### Route naming conventions
+- Prefix by resource: `customers`, `bookings`, `services`
+- DataTables: `GET customers/datatables/list`
+- Nested: `customers/order-history/{id}`
+- URL params use `{id}` for `public_id` (string UUID)
+
+### Bootstrap middleware aliases (`bootstrap/app.php`)
+
+```php
+$middleware->alias([
+    'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
+    'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,
+    'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
+]);
+```
+
+Register API exception rendering for Spatie `UnauthorizedException` → JSON 403 via `respondError` format.
+
+---
+
+## Migrations
+
+```php
+Schema::create('user_profiles', function (Blueprint $table) {
+    $table->id();
+    $table->uuid('public_id')->unique();           // if not using trait-only generation
+    $table->foreignId('user_id')->constrained()->onDelete('cascade');
+    $table->decimal('point', 10, 2)->default(0.00);
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->index('user_id');
+});
+```
+
+### Rules
+- Filename: `YYYY_MM_DD_HHMMSS_action_table_name.php`
+- Always add foreign key constraints with explicit `onDelete`
+- Index columns used in WHERE/ORDER BY/JOIN (foreign keys, `public_id`, `email`, `status`)
+- `$table->timestamps()` on most tables
+- `$table->softDeletes()` when model uses `SoftDeletes`
+- Consult on indexes when expected volume > 100k records
+
+---
+
+## Jobs & Queues
+
+### Email (mandatory async)
+
+```php
+// EmailService
+public function sendOtp(string $email, string $otpCode): void
+{
+    SendEmailJob::dispatch($email, new OtpMail($otpCode));
+}
+
+// SendEmailJob
+class SendEmailJob implements ShouldQueue
+{
+    public $tries = 3;
+
+    public function failed(\Throwable $exception): void
+    {
+        Log::error('Failed to send email', [...]);
+    }
+}
+```
+
+### Rules
+- ALL emails via `SendEmailJob` — never `Mail::to()->send()` in Service
+- ALL notifications implement `ShouldQueue`
+- Set `$tries = 3` on jobs
+- Implement `failed()` for permanent failure logging
+- Use Job Batching when processing > 10 records at once
+- Heavy processing (PDF generation, bulk import, payment webhooks) always queued
+
+---
+
+## Notifications
+
+```php
+class GeneralNotification extends Notification implements ShouldQueue
+{
+    use Queueable;
+
+    public function via($notifiable): array
+    {
+        return ['database']; // + broadcast/FCM when needed
+    }
+}
+```
+
+---
+
+## DataTables (Server-Side)
+
+Manual implementation only. Use `HandlesDataTablesRequest` trait.
+
+### Controller methods (SRP)
+| Method | Responsibility |
+|--------|----------------|
+| `list()` | Orchestrate flow |
+| `buildBaseQuery()` | Base Eloquent query with joins/eager loads |
+| `applyFilters()` | Search + additional filters |
+| `applySorting()` | Allowlisted column sorting |
+| `transform{Model}()` | Model → array for frontend |
+| `getColumnMapping()` | DataTables column index → DB column |
+| `getAllowedSortColumns()` | Security allowlist |
+| `getDefaultSortColumn()` | Fallback sort column |
+
+### Response format
+
+```json
+{
+  "draw": 1,
+  "recordsTotal": 100,
+  "recordsFiltered": 50,
+  "data": []
+}
+```
+
+### Security
+- Use `DataTablesListRequest` for parameter validation
+- Sort columns MUST be allowlisted — never pass request input directly to `orderBy`
+- Search uses **prefix pattern**: `"{$searchValue}%"` (not `%value%`) for index performance
+- Raw SQL: parameter binding only; document in `docs/SECURITY_RAW_SQL.md`
+
+---
+
+## Select / Async Dropdown Endpoints
+
+For react-select `loadOptions`:
+- Controller: `SelectController` methods per entity
+- Service: `SelectService` with paginated `{ data: [{value, label}], total, page, pageSize }`
+- Request: `SelectListRequest` (page, search, sort validated)
+
+---
+
+## Constants & Exceptions
+
+### Constants (`app/Constants/`)
+Group by entity with helper methods:
+
+```php
+class Status
+{
+    const GENERAL_STATUS_ACTIVE = 'active';
+    const GENERAL_STATUS_INACTIVE = 'inactive';
+
+    public static function getGeneralStatuses(): array
+    {
+        return [self::GENERAL_STATUS_ACTIVE, self::GENERAL_STATUS_INACTIVE];
+    }
+}
+```
+
+Use constants in Services, validation rules, and queries — never magic strings.
+
+### Exceptions (`app/Exceptions/`)
+Domain-specific, extend `\Exception`, descriptive default message:
+
+```php
+class OrderNotFoundException extends Exception
+{
+    public function __construct(
+        string $message = 'Order not found',
+        int $code = 404,
+        ?\Throwable $previous = null
+    ) {
+        parent::__construct($message, $code, $previous);
+    }
+}
+```
+
+---
+
+## Contracts & Dependency Injection
+
+```php
+// app/Contracts/PaymentGatewayInterface.php
+interface PaymentGatewayInterface
+{
+    public function createPayment(Order $order, string $paymentMethod): array;
+    public function verifySignature(array $notification): bool;
+}
+
+// app/Providers/AppServiceProvider.php
+$this->app->bind(PaymentGatewayInterface::class, MidtransPaymentGateway::class);
+```
+
+Inject interfaces in Services, not concrete implementations.
+
+---
+
+## Support Classes
+
+Pure/static domain logic with no HTTP concerns:
+
+```php
+final class BookingSubtotal
+{
+    public static function fromPayload(array $bookingItems): float { /* ... */ }
+    public static function fromItems(Collection $items): float { /* ... */ }
+}
+```
+
+Use when logic is shared across multiple Services but doesn't belong in a Service or Model.
+
+---
+
+## Security
+
+1. **Never concatenate user input into raw SQL** — use bindings or allowlists
+2. **Sort/filter params** validated in Form Request + allowlisted in controller/trait
+3. **Expose `public_id` (UUID)** in API, never internal auto-increment `id`
+4. **Parameterized queries** for all raw SQL (`whereRaw('col = ?', [$value])`)
+5. **Rate limiting** on routes: `middleware(['throttle:60'])`
+6. **Permission checks** per route via Spatie `permission:` middleware
+7. **Admin gate bypass** in `AppServiceProvider`: admin role passes all abilities
+8. Run PHPStan before merge: `./vendor/bin/phpstan analyse --memory-limit=512M`
+
+---
+
+## Testing (Pest PHP)
+
+### Structure
+- `tests/Feature/Api/` — full HTTP flow tests (`postJson`, `assertJson`, `assertDatabaseHas`)
+- `tests/Unit/Service/` — isolated service logic
+- `tests/Unit/Jobs/` — job dispatch and handle
+- Global helpers in `tests/Pest.php`
+
+### Conventions
+
+```php
+uses(TestCase::class, RefreshDatabase::class)->in('Feature', 'Unit');
+
+describe('Authentication', function () {
+    test('successfully logs in and returns token', function () {
+        $user = createCustomer();
+
+        $response = using($this)->postJson('/api/v1/auth/login', [
+            'email' => $user->email,
+            'password' => generatePassword(),
+        ]);
+
+        $response->assertStatus(Response::HTTP_OK);
+        $response->assertJsonStructure(['message', 'data' => ['token', 'token_type', 'expires_in']]);
+    });
+});
+```
+
+### Rules
+- Use factories + `RefreshDatabase`
+- `Queue::fake()` when testing async dispatch without execution
+- `Storage::fake()` for file upload tests
+- Test authorization: role/permission denied returns 403
+- Test validation errors return 422
+- Authenticated API tests use `actingAs($user, 'api')` — never `Sanctum::actingAs()`
+- Shared setup helpers: `createCustomer()`, `actingAsAdmin()`, `generatePassword()`
+
+---
+
+## Code Style
+
+- **PSR-12** enforced by Laravel Pint
+- **Type hints** on all method parameters and return types
+- **Constructor property promotion** for dependency injection
+- **Named arguments** in helper calls for clarity
+- **PHPDoc blocks** on all public methods (Controllers, Services, Models)
+- Inline comments only for non-obvious business logic
+- Run `./vendor/bin/pint` before commit
+
+---
+
+## Naming Conventions
+
+| Element | Convention | Example |
+|---------|------------|---------|
+| Controller | `{Domain}Controller` | `CustomerController` |
+| DataTables controller | `{Domain}DatatablesController` | `CustomerDatatablesController` |
+| Service | `{Domain}Service` | `CustomerService` |
+| Form Request | `{Action}{Domain}Request` | `CreateCustomerRequest` |
+| API Resource | `{Domain}Resource` | `CustomerResource` |
+| Model | Singular PascalCase | `User`, `BookingItem` |
+| Migration table | plural snake_case | `booking_items` |
+| Route file | singular/plural domain | `customer.php` |
+| Variables | camelCase | `$customerService` |
+| Constants | SCREAMING_SNAKE_CASE | `BOOKING_STATUS_PENDING` |
+| Permission | `{resource}.{action}` | `customer.create` |
+| Role | lowercase string | `admin`, `customer` |
+
+---
+
+## New Feature Checklist
+
+When adding a new domain feature, create in this order:
+
+1. [ ] Migration (+ indexes, foreign keys, soft deletes if needed)
+2. [ ] Model (fillable, casts, relationships, scopes, HasPublicId, SoftDeletes)
+3. [ ] Factory + Seeder (if needed)
+4. [ ] Constants (status values)
+5. [ ] Form Request(s) per action
+6. [ ] Service (CRUD + business logic with transactions)
+7. [ ] API Resource(s)
+8. [ ] Controller(s) — CRUD + DataTables if list page exists
+9. [ ] Routes file with middleware + permissions
+10. [ ] Feature tests (happy path + validation + auth)
+11. [ ] Unit tests for complex service logic
+12. [ ] PHPStan passes, Pint formatted
+
+---
+
+## Idiomatic Patterns Summary
+
+```
+✓ Thin Controller → Form Request → Service → Model → DB
+✓ UUID public_id for external references
+✓ DB::transaction for writes; lockForUpdate for concurrency
+✓ respondWithData/respondError for all JSON responses
+✓ API Resources for output transformation
+✓ SendEmailJob for all emails
+✓ ShouldQueue for all notifications
+✓ Constants class for status values
+✓ Custom exceptions for domain errors
+✓ Contract + ServiceProvider binding for integrations
+✓ Manual DataTables with HandlesDataTablesRequest trait
+✓ Prefix search (value%) in DataTables
+✓ Allowlisted sort columns
+✓ Pest Feature + Unit tests with shared helpers
+✓ Spatie roles/permissions on routes
+✓ JWT auth (`auth:api`, JWTSubject) — not Sanctum
+✓ Split route files by domain under routes/api/v1/
+```
+
+```
+✗ Repository pattern
+✗ DTO classes
+✗ Action classes (by default)
+✗ Validation in controller
+✗ Business logic in controller
+✗ Sync email/notification sending
+✗ Yajra DataTables package
+✗ Exposing internal id in API
+✗ Laravel Sanctum / HasApiTokens for API authentication
+✗ Magic strings for status values
+✗ User input in raw SQL identifiers
+✗ Contains search (%value%) unless documented exception
+```
