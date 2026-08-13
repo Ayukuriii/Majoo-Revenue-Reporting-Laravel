@@ -11,4 +11,5 @@ Route::prefix('auth')->group(function (): void {
 
 Route::middleware('auth:api')->group(function (): void {
     require __DIR__.'/user/outlet.php';
+    require __DIR__.'/user/report.php';
 });
