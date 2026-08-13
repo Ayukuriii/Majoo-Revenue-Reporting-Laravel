@@ -1,0 +1,53 @@
+# Majoo Revenue Reporting — production nginx vhost (example)
+#
+# Copy this file, replace APP_DOMAIN, enable TLS, then symlink into sites-enabled.
+# APP_DOMAIN is replaced by the operator. codecat.space is only an example.
+# Likely future host: majoo-revenue-reporting.codecat.space
+#
+# SPA files live in public/spa (created in Step 9 via npm run build).
+# Do not overwrite public/index.php with the SPA.
+#
+# PHP-FPM socket: unix:/run/php/php8.2-fpm.sock
+# Change the socket filename if this server runs another PHP version
+# (e.g. unix:/run/php/php8.3-fpm.sock).
+
+server {
+    listen 80;
+    listen [::]:80;
+    # listen 443 ssl;
+    # listen [::]:443 ssl;
+    # ssl_certificate     /etc/ssl/certs/APP_DOMAIN.crt;
+    # ssl_certificate_key /etc/ssl/private/APP_DOMAIN.key;
+
+    server_name APP_DOMAIN;
+
+    root /var/www/html/majoo-revenue-reporting/public;
+    index index.php;
+
+    charset utf-8;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    location /api {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        try_files $uri =404;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    # Built React SPA (Step 9). Laravel public/index.php stays the API front controller.
+    location / {
+        root /var/www/html/majoo-revenue-reporting/public/spa;
+        try_files $uri /index.html;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
